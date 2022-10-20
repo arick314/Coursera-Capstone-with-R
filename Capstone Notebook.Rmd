@@ -1,0 +1,351 @@
+---
+title: "Google Data Analytics Capstone Project"
+subtitle: "Fitbit Analysis for Bellabeat Trend Detection"
+output: html_notebook
+---
+
+# Introduction
+
+This notebook was created for the Google Data Analytics Professional Certificate on Coursera. The purpose of this notebook is to demonstrate the skills and abilities taught in R to solve a case study presented by Google. The scenario for this case study is to answer data-related business questions from a company called Bellabeat. The problem that this notebook is attempting to solve it the discovery of actionable and meaningful trends that can impact customers and assist the marketing department.
+
+# Data Preparation
+
+In this stage, data collection and a high-level understanding of the data is performed here. The specific dataset that will be analyzed is the FitBit Fitness Tracker Data dataset which can be downloaded [here](https://www.kaggle.com/datasets/arashnic/fitbit)
+
+Upon downloading the dataset, there are many files that contain the same information or may not be helpful for analysis. Let's begin by loading the libraries necessary for this notebook.
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(skimr)
+```
+
+### Import Data
+
+Next, we'll read the csv files that may be helpful to analyze. The description and reasoning for this selection of csv files are in the report that is included in [this](https://github.com/arick314) GitHub link.
+
+```{r message=FALSE, warning=FALSE}
+daily_activity <- read_csv("dailyActivity_merged.csv")
+hourly_calories <- read_csv("hourlyCalories_merged.csv")
+hourly_intensities <- read_csv("hourlyIntensities_merged.csv")
+hourly_steps <- read_csv("hourlySteps_merged.csv")
+daily_sleep <- read_csv("sleepDay_merged.csv")
+daily_weight <- read_csv("weightLogInfo_merged.csv")
+```
+
+As mentioned in the report, the `hourly_calories`, `hourly_intensities`, and `hourly_steps` tables can be combined as they each has similar keys of user ID and time. The `left_join()` function from the `dplyr` package allows you to join tables similar to a SQL join. Using pipes, we can left join on `hourly_calories` twice with the unique key being both Id and `ActivityHour` columns.
+
+```{r}
+hourly_activity <- hourly_calories %>% 
+  left_join(hourly_intensities, by = c("Id" = "Id", "ActivityHour" = "ActivityHour")) %>% 
+  left_join(hourly_steps, by = c("Id" = "Id", "ActivityHour" = "ActivityHour"))
+```
+
+### Initial Data Exploration
+
+In this section, we will look at each dataset `daily_activity`, `hourly_activity`, `daily_sleep`, and `daily_weight` and make note of necessary cleaning steps, further visualizations, and look at some trends that may be important.
+
+```{r}
+head(daily_activity)
+head(hourly_activity)
+head(daily_sleep)
+head(daily_weight)
+```
+
+#### Summary Statistics
+
+Before finding summary statistics, we should convert each of the `Ids` into a string values
+
+```{r}
+daily_activity <- mutate_at(daily_activity, vars("Id"), as.character)
+hourly_activity <- mutate_at(hourly_activity, vars("Id"), as.character)
+daily_sleep <- mutate_at(daily_sleep, vars("Id"), as.character)
+daily_weight <- mutate_at(daily_weight, vars("Id"), as.character)
+```
+
+Next, we should analyze the summary statistics of each remaining table. For clarity, each table will be separated into its own chunk and each chunk will have short key observations below them. These can be data cleaning tasks or ideas that need to be considered in the future.
+
+##### Daily Activity
+
+```{r}
+skim_without_charts(daily_activity)
+```
+
+-   Cleaning: Minimum values are 0 for all values which is unlikely that someone took 0 steps
+-   Cleaning: Total distance and Tracker distance are nearly identical
+-   Cleaning: Most `LoggedActivitiesDistance` values are 0
+-   Analysis: Distance is split into four categories (`Sedentary`, `LightActive`, `ModeratelyActive`, and `VeryActive`)
+-   Analysis: Measures minutes within the hour that are within those four as well
+-   Cleaning: Column `Calories` is nondescript. Change it to `CaloriesBurned`
+-   Cleaning: Should convert the date column into a different format
+
+##### Hourly Activity
+
+```{r}
+skim_without_charts(hourly_activity)
+```
+
+-   Cleaning: `TotalIntensity` is `AverageIntensity \ 60`. So, should only keep `TotalIntensity`
+-   Cleaning: Change `Calories` to `CaloriesBurned`
+-   Cleaning: Should convert the date column into a different format
+
+##### Daily Sleep
+
+```{r}
+skim_without_charts(daily_sleep)
+```
+
+-   Cleaning: There are only 24 unique `Id` values to the 33 unique values to the ones above
+-   Cleaning: `TotalMinutesAsleep - TotalTimeInBed` could be an important feature for analysis
+-   Cleaning: Can't be generally combined with other `daily_activity` since only 413 values are recorded
+-   Cleaning: Many users are missing days or did not record.
+-   Analysis: Could be used for specific sleep analysis against `daily_activity`
+-   Cleaning: Should convert the date column into a different format
+
+##### Daily Weight
+
+```{r}
+skim_without_charts(daily_weight)
+```
+
+-   Analysis: Only two users recorded their weight more than 5 times
+-   Analysis: Only eight users ever recorded their weight once.
+-   Cleaning: This dataset doesn't look like it can be used for trends, as only two users responded with enough data
+
+### Data Integrity
+
+After exploring the datasets, there is areas where data integrity could be improved. For instance, there are a lot of unrecorded values for each hour. Some datasets don't include all days and some users have more records than others. The data integrity attached to the data itself seems decent as all values of calories burned, time asleep, and other measurable variables are within range of normal behavior. Although there are some instances where zero steps and activity are recorded in a day. So, this will need to be explored further and addressed during the data cleaning step. Overall, the data is usable to explore trends.
+
+# Data Cleaning
+
+To approach this step, we can look at each table separately and enact the cleaning steps that were outlined above in this section. Each dataset will be split into their own section in the notebook and the cleaning steps will be outline beforehand. Since the `Daily Weight` dataset did not have enough participating users, it won't be used in further analysis
+
+##### Daily Activity
+
+1.  Minimum values are 0 for all values which is unlikely that someone took 0 steps
+2.  Total distance and Tracker distance are nearly identical
+3.  Most `LoggedActivitiesDistance` values are 0
+4.  Column `Calories` is nondescript. Change it to `CaloriesBurned`
+5.  Convert the date column into a different format
+
+First, let's look at the values where each feature is equal to zero.
+
+```{r}
+filter(daily_activity, TotalSteps == 0) 
+```
+
+This may be due to the user not wearing the watch or it needed to charge for that day. There are 77 rows that have no records, so they could be removed to not impact the rest of the analysis
+
+Next, let's look at the relationship of `TotalDistance` and `TrackerDistance`
+
+```{r}
+filter(daily_activity, TotalDistance - TrackerDistance != 0) 
+```
+
+It seems like the only time when these are not equal are for 15 instances where `LoggedActivitiesDistance` is also not zero. However, adding the distances from `VeryActive`, `ModeratelyActive`, `LightActive`, and `SedentaryActive` seems to equal the `TotalDistance` column. So we can remove `TrackerDistance` and `LoggedActivitiesDistance` from the analysis as they could be redundant
+
+Finally, let's make the changes proposed above while converting the date column
+
+```{r}
+daily_activity_clean <- daily_activity %>% 
+  filter(TotalSteps != 0) %>% 
+  select(-c(TrackerDistance, LoggedActivitiesDistance)) %>% 
+  rename(CaloriesBurned = Calories) %>% 
+  mutate(ActivityDate = mdy(ActivityDate))
+  
+head(daily_activity_clean)
+```
+
+##### Hourly Activity
+
+1.  `TotalIntensity` is `AverageIntensity \ 60`. So, should only keep `TotalIntensity`
+2.  Change `Calories` to `CaloriesBurned`
+3.  Convert the date column into a different format
+
+```{r}
+hourly_activity_clean <- hourly_activity %>% 
+  select(-c(AverageIntensity)) %>% 
+  rename(CaloriesBurned = Calories) %>% 
+  mutate(ActivityHour = mdy_hms(ActivityHour))
+
+head(hourly_activity_clean)
+```
+
+##### Daily Sleep
+
+1.  There are only 24 unique `Id` values to the 33 unique values to the ones above
+2.  `TotalMinutesAsleep - TotalTimeInBed` could be an important feature for analysis
+3.  The date and time feature has midnight for every time, so we could remove this and just look at date
+4.  Convert the date column into a different format that removes midnight
+
+First, let's look at the counts of each user and see how many times they recorded their sleep times during that day
+
+```{r}
+unique_counts_daily_sleep <- daily_sleep %>% 
+  group_by(Id) %>% 
+  summarize(user_counts = n_distinct(SleepDay))
+
+unique_counts_daily_sleep
+```
+
+We can see that many users recorded their sleep times only a few times while others did so a lot. To find an accurate trend between activity and sleep, we may only want to consider users that recorded their sleep more than a certain amount of times. So, we could eliminate the users with less than 10 records
+
+```{r}
+# The filter grabs only values that have greater than 10 user_count
+# Then, the c() and $ grabs the column of Ids into a vector
+list_values_gt_ten <- c(filter(unique_counts_daily_sleep, user_counts >10)$Id)
+
+# Then, we filter out values from the original that are not in the vector
+daily_sleep_clean <- daily_sleep %>%
+  filter(Id %in% list_values_gt_ten) %>% 
+  mutate(MinutesRestless = TotalTimeInBed - TotalMinutesAsleep) %>%  # Also add MinutesRestless column
+  mutate(SleepDay = mdy_hms(SleepDay))
+
+daily_sleep_clean
+```
+
+```{r}
+#write_csv(daily_activity_clean, "daily_activity_clean.csv")
+#write_csv(hourly_activity_clean, "hourly_activity_clean.csv")
+#write_csv(daily_sleep_clean, "daily_sleep_clean.csv")
+```
+
+# Data Analysis
+
+In this section, we will begin by exploring and visualization the notes that were taken in the prepare phase as well as attempt to discover new and exciting ways to find trends within this dataset. As a reminder, here are the list of notes that were taken above as well as the table in which they belonged to.
+
+1.  Daily Activity: Distance is split into four categories (`Sedentary`, `LightActive`, `ModeratelyActive`, and `VeryActive`)
+2.  Daily Activity: Measures minutes within the hour that are within those four as well
+3.  Sleep Activity: Could be used for specific sleep analysis against `daily_activity`
+
+Then, here are additional insights that we should also try to explore.
+
+4.  The `hourly_activity` table has only a few features, but those features should be explored further
+5.  We created a `MinutesRestless` column in the `daily_sleep` table
+6.  Finally, from exploring the data, there are a lot of missing values likely due to charging or not interacting with the various systems available in the Fitbit
+
+### Average Steps per Hour vs Day of the Week
+
+First, we'll look at fitness activity depending on the day of the week. This may reveal insights on how active people are on weekdays or weekends.
+
+```{r}
+# Start by creating a column that captures the day of the week
+daily_activity_clean$day_of_week = weekdays(daily_activity_clean$ActivityDate)
+
+# Then, we'll group the data by averaging the steps in each hour
+daily_activity_visual <- daily_activity_clean %>% 
+  group_by(day_of_week) %>% 
+  summarize(average_steps = mean(TotalSteps))
+```
+
+```{r}
+# Create a vector to display the x-axis in a non-alphabetical manner
+days_vector = c('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
+
+ggplot(daily_activity_visual, aes(x=factor(day_of_week, level = days_vector), y=average_steps)) +
+  geom_col(fill = "steelblue") +
+  ylim(0,10000) +
+  labs(x = "Day of the Week", 
+       y = "Average Steps",
+       title = "Average Steps per Day",
+       subtitle = "Sunday and Friday have the least amount of steps") +
+  theme_bw()
+```
+
+##### Analysis
+
+From the visualization, we can see that people have less activity on Sundays and Fridays. They average more than 1000 steps less on those days than Tuesdays and Saturdays. If we are seeking times or days where users can charge their devices, it would likely be on a day where they are least active. 
+
+
+### Best Charging Time in the Day
+
+In addition to finding a weekday to find the best charging times, we can also look for the best hour to charge the fitness device as well.
+
+```{r}
+hourly_groups <- hourly_activity_clean %>%
+  mutate(hours_in_day = hour(ActivityHour)) %>% 
+  group_by(hours_in_day) %>%
+  summarise(average_steps = mean(StepTotal))
+
+ggplot(data = hourly_groups, aes(x = hours_in_day, y = average_steps)) + 
+  geom_col(fill = "steelblue") +
+  labs(x = "Hour", 
+       y = "Average Steps",
+       title = "Average Steps in each Hour",
+       subtitle = "Users are most active from 7AM to 8PM") +
+  theme_bw()
+```
+
+But, the sleep features of the Fitbit are one of the datasets that also have evidence of less interaction. Users are removing their fitness device while sleeping to charge their device or for comfort. To find best charging times and increase interactivity. To find most sleep times, we can look at the counts of when `TotalIntensity` is zero.
+
+```{r}
+hourly_groups <- hourly_activity_clean %>%
+  filter(TotalIntensity == 0) %>% 
+  mutate(hours_in_day = hour(ActivityHour)) %>% 
+  count(hours_in_day)
+
+ggplot(data = hourly_groups, aes(x = hours_in_day, y = n)) + 
+  geom_col(fill = "steelblue") +
+  labs(x = "Hour", 
+       y = "Counts of No Activity",
+       title = "No Activity Counts per Hour",
+       subtitle = "To find ideal charging times, most users are sleeping are from 9PM to 8AM") +
+  theme_bw()
+```
+
+##### Analysis
+
+The time where users are most active from 7AM to 8PM. And, the time where most users are sleeping are from 9PM to 8AM. As such, there are a few hours of time where ideal charge times exist. 3PM, where there is a dip in user activity. 8PM and 9PM where activity is lower, but users are not completely asleep.
+
+
+### Restless Minutes Analysis
+
+When starting to analyze the `MinutesRestless` column, some outliers were detected. For the purpose of the analysis, they will be removed for easier to follow visualizations.
+
+```{r}
+sleep_activity_combined <- left_join(daily_sleep_clean, daily_activity_clean, by = c("Id" = "Id", "SleepDay" = "ActivityDate")) %>% 
+  filter(MinutesRestless < 100)
+
+ggplot(sleep_activity_combined, aes(x = TotalSteps, y = MinutesRestless)) +
+  geom_smooth(color = "red") +
+  geom_point() +
+  labs(x = "Total Steps", 
+       y = "Minutes Restless",
+       title = "Relationship between Steps and Sleep",
+       subtitle = "No certain trends could be found for a person's steps on restlessness") +
+  theme_bw()
+```
+
+##### Analysis
+
+Unfortunately, the newly created feature `MinutesRestless` did not reveal any trends with activity. This may be due to inaccurate readings on when a user is sleeping or just laying down. Or, it could also mean there is no correlation between restlessness and exercise.
+
+### Activity's Effects on Calories Burned
+
+After attempting to analyze the differences between `SedentaryMinutes`, `LightlyActiveMinutes`, `FairlyActiveMinutes`, and `VeryActiveMinutes` against `CaloriesBurned`, no clear trends were detected. However by adding the lightly, fairly, and very active columns together to create a new `ActiveMinutes` column, a trend is started to appear. 
+
+```{r}
+d_act_combined_minutes <- daily_activity_clean %>% 
+  mutate(ActiveMinutes = LightlyActiveMinutes + FairlyActiveMinutes + VeryActiveMinutes)
+
+ggplot(d_act_combined_minutes, aes(x = ActiveMinutes, y = CaloriesBurned)) +
+  geom_smooth(color = "red") +
+  geom_point(color = "black", size = 1) +
+  labs(x = "Active Minutes", 
+       y = "Calories Burned",
+       title = "Trend between Activity and Calories Burned",
+       subtitle = "Any type of activity is correlated with more calories burned each day") +
+  theme_bw()
+```
+
+##### Analysis
+
+This could suggest that the type of activity does not affect calories burned which can be used to persuade users to exercise in a more light manner every day. There is a positive correlation because the number of active minutes and calories burned. Meanwhile, there were no definite trends between `CaloriesBurned` and the four types of activities until they were combined.
+
+
+# Recommendations
+
+One of the main issues seems to be lack of consistent usage by some members. The marketing department can advertise best charge times for its users based on its users habits as well as a reminder to wear the watches while active and while sleeping to record and improve sleeping habits as well. According to the usage charts above, the best times to charge your watch would be on Sundays and Fridays at 3PM, 8PM, or 9PM
+
+Another recommendation to the company could be advertising any type of activity, not just rigorous activity, is great for calories burned. Interacting with the health aspects of the monitoring watch may also assist in sales of health-related products on their website.
