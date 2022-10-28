@@ -6,7 +6,7 @@
 ---
 
 ### Project Description
-The purpose of this case study for one person was to analyze trends for a case study for a company called Bellabeat by analyzing fitness data. By following the data analytics life cycle, the final deliverable were recommendations and a presentation utilizing all of the concepts that were taught throughout the course including ensuring data integrity, cleaning, and following the data process.
+The purpose of this case study was to analyze trends for a company called Bellabeat by analyzing fitness data. By following the data analytics life cycle, the final deliverable were recommendations and a presentation utilizing all of the concepts that were taught throughout the course including ensuring data integrity, cleaning, and following the data process.
 
 ### Datasets
 ##### FitBit Fitness Tracker Data
